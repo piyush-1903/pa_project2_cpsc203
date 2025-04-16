@@ -5,89 +5,95 @@ import random
 
 # At each intersection, should we try to go as straight as possible?
 # Set to False for task 1, then switch to True for task 2.
-STRAIGHTER_PATH = False
+STRAIGHTER_PATH = True
 
 # =================================
 # Workout planning with length, bearing, and elevation
 # You will debug and complete our implementation, including the following features:
-# 1) find any path in the UBC graph whose total distance is > target using dfs
+# 1) find any path in the UBC graph whose total distance is > target using DFS
 # 2) above plus: take the "straightest" direction out of any vertex
 # 3) above plus: report total elevation gain
 
-# Helper function that determines if edge (v,w) is a valid candidate for adding to the graph
+# Helper function that determines if edge (v, w) is a valid candidate for adding to the graph.
 def good(gst, d, v, w, graph, goal_dist):
-    return (v not in gst.adj[w]
-            and graph.edges[v, w, 0]['length'] > 0
-            and d + graph.edges[v, w, 0]['length'] < goal_dist)
-
+    return (
+        not gst.has_edge(v, w)               # Ensure the edge from v to w isn't already in gst.
+        and not gst.has_edge(w, v)              # Check for a backedge. 
+        and graph.edges[v, w, 0]['length'] > 0 # Edge length must be positive.
+        and d + graph.edges[v, w, 0]['length'] <= goal_dist * 1.1  # Do not exceed 110%.
+    )
 
 
 # Helper function that returns the absolute difference between any 2 given directions.
-# Note that the value should never be more than 180, since a left turn of x is
-# equivalent to a right turn of (360 - x).
+# Ensures the result is never more than 180.
 def get_bearing_diff(b1, b2):
-    bdiff = abs(b1-b2) % 360 # allows for neg and large bearings
-    return bdiff
+    diff = abs(b1 - b2) % 360
+    if diff > 180:
+        diff = 360 - diff
+    return diff
 
-
-
-# Main dfs function. Given a start node, goal distance, and graph of distances,
-# solve these 2 related questions:
-# Part 1: return a subgraph whose edges are a trail with distance at least goal_distance
-# Part 2: return a subgraph with the characteristics from Part 1, but change the definition
-# of "neighbors" so that at every node, the direction of the next edge is as close as possible
-# to the current direction. This feature changes the order in which the neighbors are considered.
+# Main DFS function.
+# Given a start node, goal distance, and a graph of distances,
+# this function returns a subgraph whose edges form a trail with total distance 
+# between goal_dist and goal_dist * 1.1.
 def find_route(start, goal_dist, graph):
-    # distances and feasible edges will come from 'graph', solution built in 'gstate'
+    # 'gstate' will hold our solution subgraph.
     gstate = nx.DiGraph()
     gstate.add_nodes_from(graph)
 
-    # need stack of: (gstate, prev node, curr node, totlen so far, number of edges in route so far)
-    # init stack & push start vertex
+    # Stack elements: (gstate, previous node, current node, total length so far, number of edges so far)
     stack = deque()
     stack.append((gstate, start, start, 0, 0))
-    # next two lines are necessary for part 2) so that every current bearing has a previous bearing to compare against
+    
+    # Initialize the "previous bearing" at the start node.
     graph.add_edge(start, start, 0)
-    graph.edges[start, start, 0]['bearing'] = random.randint(0,360) # grab a random initial direction
+    graph.edges[start, start, 0]['bearing'] = random.randint(0, 360)  # random initial direction
 
     while stack:
-        gst, prev, curr, lensofar, clock = stack.pop()  # gst, previous node, curr node, dist so far, edges so far
+        gst, prev, curr, lensofar, clock = stack.pop()  # current DFS state
 
         if curr not in list(gst.neighbors(prev)):
             gst.add_edge(prev, curr)
-            gst.edges[prev, curr]['time'] = clock # need this for path drawing
+            gst.edges[prev, curr]['time'] = clock  # for route drawing
 
-            # stopping criteria: if we've gone far enough, return our solution graph and the number of edges
-            if lensofar > goal_dist:
+            # Check if the current route is within the acceptable length range.
+            if goal_dist <= lensofar <= goal_dist * 1.1:
                 return gst, clock
 
             if STRAIGHTER_PATH:
-                # neighbors for part 2 - the "straightest" path
-                neighbors = sorted(graph.neighbors(curr),
-                                    key=lambda x: get_bearing_diff(graph.edges[prev, curr, 0]['bearing'],
-                                                                    graph.edges[curr, x, 0]['bearing']))
+                # For the "straightest" path, sort neighbors by how close their bearing is to current direction.
+                neighbors = sorted(
+                    graph.neighbors(curr),
+                    key=lambda x: get_bearing_diff(
+                        graph.edges[prev, curr, 0]['bearing'],
+                        graph.edges[curr, x, 0]['bearing']
+                    )
+                )
             else:
-                # neighbors for part 1 - just finding a path
+                # Otherwise, consider all neighbors in arbitrary order.
                 neighbors = graph.neighbors(curr)
 
             for w in neighbors:
                 if good(gst, lensofar, curr, w, graph, goal_dist):
-                    gstnew = gst.copy() # copy the path so we don't have to deal w backtracking. ok for small graphs.
-                    stack.append((gstnew, curr, w, lensofar + graph.edges[curr, w, 0]['length'], clock + 1))
+                    gstnew = gst.copy()  # make a copy for the new branch
+                    new_length = lensofar + graph.edges[curr, w, 0]['length']
+                    stack.append((gstnew, curr, w, new_length, clock + 1))
 
-# returns the total elevation gain in gr, over the route described by rt (list of vertices).
-# edges whose elevation gain is negative should be ignored.
-# you can refer to a node's elevation by: gr.nodes[rt[k]]['elevation'], where k is the kth element
-# of the rt list.
+# Returns the total elevation gain over the route described by the list of vertices `rt`.
+# Only positive differences (uphill segments) are accumulated.
 def total_elevation_gain(gr, rt):
-    # TODO your code here
-    pass
-
+    gain = 0
+    for i in range(1, len(rt)):
+        diff = gr.nodes[rt[i]]['elevation'] - gr.nodes[rt[i-1]]['elevation']
+        if diff > 0:
+            gain += diff
+    return gain
 
 # hsv color representation gives a rainbow from red and back to red over values 0 to 1.
-# this function returns the color in rgb hex, given the current and total edge numbers
+# This function returns the corresponding RGB hex code, given the current and total edge numbers.
 def shade_given_time(k, n):
     col = colorsys.hsv_to_rgb(k / n, 1.0, 1.0)
-    tup = tuple((int(x * 256) for x in col)) # why doesn't this work???
+    # Multiply by 255 (not 256) so the maximum value is 255.
+    tup = tuple(int(x * 255) for x in col)
     st = f"#{tup[0]:02x}{tup[1]:02x}{tup[2]:02x}"
     return st
